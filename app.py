@@ -6,7 +6,7 @@ import time
 import json
 from dotenv import load_dotenv
 
-#  ENV 
+# ================= ENV =================
 load_dotenv()
 
 RAZORPAY_API_KEY = os.getenv("RAZORPAY_API_KEY")
@@ -14,18 +14,18 @@ RAZORPAY_SECRET_KEY = os.getenv("RAZORPAY_SECRET_KEY")
 
 client = razorpay.Client(auth=(RAZORPAY_API_KEY, RAZORPAY_SECRET_KEY))
 
-#  CONFIG 
+# ================= CONFIG =================
 AMOUNT_RS = 1
 STATUS_FILE = "payment_status.json"
 
 payment_state = "pending"
 payment_id = None
 failure_reason = None
+current_payment_id = None   # 🔥 IMPORTANT
 
-#  DO NOT DELETE STATUS FILE
 print("[INFO] Waiting for webhook updates...")
 
-#  QR GENERATION 
+# ================= QR GENERATION =================
 def generate_qr():
     payment = client.payment_link.create({
         "amount": AMOUNT_RS * 100,
@@ -40,8 +40,8 @@ def generate_qr():
     print("[INFO] QR Generated:", payment["short_url"])
     return payment["id"]
 
-#  READ WEBHOOK 
-def read_webhook_status():
+# ================= READ WEBHOOK =================
+def read_webhook_status(target_pid):
     if not os.path.exists(STATUS_FILE):
         return None, None
 
@@ -52,17 +52,20 @@ def read_webhook_status():
         if not isinstance(data, dict):
             return None, None
 
-        #  pick FINAL state only
-        for pid, info in data.items():
-            if info.get("state") in ("success", "failed"):
-                return info["state"], info
+        # 🔥 READ ONLY CURRENT PAYMENT
+        info = data.get(target_pid)
+        if not info:
+            return None, None
+
+        if info.get("state") in ("success", "failed"):
+            return info["state"], info
 
     except Exception as e:
         print("[ERROR] JSON read:", e)
 
     return None, None
 
-#  PYGAME UI 
+# ================= PYGAME UI =================
 pygame.init()
 screen = pygame.display.set_mode((520, 720))
 pygame.display.set_caption("ArkaShine | Payments")
@@ -79,16 +82,16 @@ GRAY = (170, 170, 170)
 GREEN = (0, 255, 140)
 RED = (255, 80, 80)
 
-#  GENERATE QR 
-generate_qr()
+# ================= GENERATE QR =================
+current_payment_id = generate_qr()
 qr_img = pygame.transform.scale(pygame.image.load("qr.png"), (300, 300))
 
-#  SCREENS 
+# ================= SCREENS =================
 def success_screen(pid):
     screen.fill(BG)
     screen.blit(title_font.render("Payment Successful", True, GREEN), (80, 260))
     screen.blit(font.render("Payment ID", True, GRAY), (190, 330))
-    screen.blit(small.render(pid, True, WHITE), (100, 360))
+    screen.blit(small.render(pid, True, WHITE), (80, 360))
 
 def failed_screen(reason):
     screen.fill(BG)
@@ -96,7 +99,7 @@ def failed_screen(reason):
     screen.blit(font.render("Reason", True, GRAY), (210, 320))
     screen.blit(small.render(reason, True, WHITE), (80, 350))
 
-#  MAIN LOOP 
+# ================= MAIN LOOP =================
 running = True
 last_check = 0
 
@@ -113,15 +116,15 @@ while running:
         screen.blit(qr_img, (110, 300))
         screen.blit(small.render("Scan from another device to pay", True, GRAY), (145, 655))
 
-        # Poll webhook
+        # 🔥 POLL WEBHOOK
         if time.time() - last_check > 2:
             last_check = time.time()
-            state, data = read_webhook_status()
+            state, data = read_webhook_status(current_payment_id)
             print("[DEBUG] Poll:", state, data)
 
             if state == "success":
                 payment_state = "success"
-                payment_id = data["payment_id"]
+                payment_id = current_payment_id
 
             elif state == "failed":
                 payment_state = "failed"

@@ -6,7 +6,7 @@ import time
 import json
 from dotenv import load_dotenv
 
-# ================= ENV =================
+#  ENV 
 load_dotenv()
 
 RAZORPAY_API_KEY = os.getenv("RAZORPAY_API_KEY")
@@ -14,7 +14,7 @@ RAZORPAY_SECRET_KEY = os.getenv("RAZORPAY_SECRET_KEY")
 
 client = razorpay.Client(auth=(RAZORPAY_API_KEY, RAZORPAY_SECRET_KEY))
 
-# ================= CONFIG =================
+#  CONFIG 
 AMOUNT_RS = 1
 STATUS_FILE = "payment_status.json"
 
@@ -22,11 +22,10 @@ payment_state = "pending"
 payment_id = None
 failure_reason = None
 
-# ================= CLEAN OLD STATUS =================
-if os.path.exists(STATUS_FILE):
-    os.remove(STATUS_FILE)
+#  DO NOT DELETE STATUS FILE
+print("[INFO] Waiting for webhook updates...")
 
-# ================= QR GENERATION =================
+#  QR GENERATION 
 def generate_qr():
     payment = client.payment_link.create({
         "amount": AMOUNT_RS * 100,
@@ -34,30 +33,38 @@ def generate_qr():
         "accept_partial": False,
         "description": "ArkaShine – Sustainable Agri Tech",
     })
-    print(f"[DEBUG] Payment link created: {payment['id']} -> {payment['short_url']}")
+
     qr = qrcode.make(payment["short_url"])
     qr.save("qr.png")
+
+    print("[INFO] QR Generated:", payment["short_url"])
     return payment["id"]
 
-# ================= WEBHOOK STATUS READER =================
+#  READ WEBHOOK 
 def read_webhook_status():
     if not os.path.exists(STATUS_FILE):
-        return "pending", None
+        return None, None
 
-    with open(STATUS_FILE, "r") as f:
-        data = json.load(f)
+    try:
+        with open(STATUS_FILE, "r") as f:
+            data = json.load(f)
 
-    # Pick first payment if multiple
-    if isinstance(data, dict):
-        for pid, val in data.items():
-            return val.get("state", "pending"), val
+        if not isinstance(data, dict):
+            return None, None
 
-    return "pending", None
+        #  pick FINAL state only
+        for pid, info in data.items():
+            if info.get("state") in ("success", "failed"):
+                return info["state"], info
 
-# ================= UI =================
+    except Exception as e:
+        print("[ERROR] JSON read:", e)
+
+    return None, None
+
+#  PYGAME UI 
 pygame.init()
-WIDTH, HEIGHT = 520, 720
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+screen = pygame.display.set_mode((520, 720))
 pygame.display.set_caption("ArkaShine | Payments")
 
 font = pygame.font.SysFont("Segoe UI", 22)
@@ -72,55 +79,53 @@ GRAY = (170, 170, 170)
 GREEN = (0, 255, 140)
 RED = (255, 80, 80)
 
-# ================= GENERATE QR =================
-payment_link_id = generate_qr()
+#  GENERATE QR 
+generate_qr()
+qr_img = pygame.transform.scale(pygame.image.load("qr.png"), (300, 300))
 
-qr_img = pygame.image.load("qr.png")
-qr_img = pygame.transform.scale(qr_img, (300, 300))
-
-# ================= SCREENS =================
+#  SCREENS 
 def success_screen(pid):
     screen.fill(BG)
-    screen.blit(title_font.render("Payment Successful", True, GREEN), (90, 260))
-    screen.blit(font.render("Payment ID", True, GRAY), (210, 330))
-    screen.blit(small.render(pid, True, WHITE), (80, 360))
+    screen.blit(title_font.render("Payment Successful", True, GREEN), (80, 260))
+    screen.blit(font.render("Payment ID", True, GRAY), (190, 330))
+    screen.blit(small.render(pid, True, WHITE), (100, 360))
 
 def failed_screen(reason):
     screen.fill(BG)
-    screen.blit(title_font.render("Payment Cancelled", True, RED), (90, 260))
-    screen.blit(font.render("Payment failed or cancelled", True, GRAY), (115, 320))
-    screen.blit(small.render("Close app and scan again", True, WHITE), (150, 360))
+    screen.blit(title_font.render("Payment Failed", True, RED), (100, 260))
+    screen.blit(font.render("Reason", True, GRAY), (210, 320))
+    screen.blit(small.render(reason, True, WHITE), (80, 350))
 
-# ================= MAIN LOOP =================
+#  MAIN LOOP 
 running = True
-last_check = time.time()
+last_check = 0
 
 while running:
     screen.fill(BG)
 
     if payment_state == "pending":
         screen.blit(title_font.render("ArkaShine", True, WHITE), (160, 30))
-        screen.blit(small.render("Deep Tech for Sustainable Agriculture", True, GRAY), (95, 75))
-
         pygame.draw.rect(screen, CARD, (60, 120, 400, 520), border_radius=18)
+
         screen.blit(font.render("Pay Amount", True, GRAY), (200, 150))
         screen.blit(amount_font.render(f"₹ {AMOUNT_RS}", True, WHITE), (205, 180))
+
         screen.blit(qr_img, (110, 300))
         screen.blit(small.render("Scan from another device to pay", True, GRAY), (145, 655))
 
-        # 🔥 Webhook sync every 2 sec
+        # Poll webhook
         if time.time() - last_check > 2:
-            state, data = read_webhook_status()
             last_check = time.time()
-            print(f"[DEBUG] Webhook read: state={state}, data={data}")
+            state, data = read_webhook_status()
+            print("[DEBUG] Poll:", state, data)
 
             if state == "success":
                 payment_state = "success"
-                payment_id = data.get("payment_id", "unknown")
+                payment_id = data["payment_id"]
 
             elif state == "failed":
                 payment_state = "failed"
-                failure_reason = data.get("reason", "Cancelled")
+                failure_reason = data.get("description", "Payment timeout")
 
     elif payment_state == "success":
         success_screen(payment_id)

@@ -1,5 +1,3 @@
-
-
 import pygame
 import razorpay
 import qrcode
@@ -36,9 +34,10 @@ def generate_qr():
         "accept_partial": False,
         "description": "ArkaShine – Sustainable Agri Tech",
     })
-
+    print(f"[DEBUG] Payment link created: {payment['id']} -> {payment['short_url']}")
     qr = qrcode.make(payment["short_url"])
     qr.save("qr.png")
+    return payment["id"]
 
 # ================= WEBHOOK STATUS READER =================
 def read_webhook_status():
@@ -48,14 +47,12 @@ def read_webhook_status():
     with open(STATUS_FILE, "r") as f:
         data = json.load(f)
 
-    # For single payment, pick first record if multiple
+    # Pick first payment if multiple
     if isinstance(data, dict):
         for pid, val in data.items():
             return val.get("state", "pending"), val
 
     return "pending", None
-print(request.headers)
-print(request.data)
 
 # ================= UI =================
 pygame.init()
@@ -76,7 +73,7 @@ GREEN = (0, 255, 140)
 RED = (255, 80, 80)
 
 # ================= GENERATE QR =================
-generate_qr()
+payment_link_id = generate_qr()
 
 qr_img = pygame.image.load("qr.png")
 qr_img = pygame.transform.scale(qr_img, (300, 300))
@@ -102,18 +99,12 @@ while running:
     screen.fill(BG)
 
     if payment_state == "pending":
-        # Title
         screen.blit(title_font.render("ArkaShine", True, WHITE), (160, 30))
         screen.blit(small.render("Deep Tech for Sustainable Agriculture", True, GRAY), (95, 75))
 
-        # Card
         pygame.draw.rect(screen, CARD, (60, 120, 400, 520), border_radius=18)
-
-        # Amount
         screen.blit(font.render("Pay Amount", True, GRAY), (200, 150))
         screen.blit(amount_font.render(f"₹ {AMOUNT_RS}", True, WHITE), (205, 180))
-
-        # QR
         screen.blit(qr_img, (110, 300))
         screen.blit(small.render("Scan from another device to pay", True, GRAY), (145, 655))
 
@@ -121,6 +112,7 @@ while running:
         if time.time() - last_check > 2:
             state, data = read_webhook_status()
             last_check = time.time()
+            print(f"[DEBUG] Webhook read: state={state}, data={data}")
 
             if state == "success":
                 payment_state = "success"
@@ -136,7 +128,6 @@ while running:
     elif payment_state == "failed":
         failed_screen(failure_reason)
 
-    # Handle quit
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
